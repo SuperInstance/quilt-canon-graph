@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quilt Canon Graph</title>
+<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<style>
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f172a; color: #e2e8f0; }
+header { padding: 20px; background: #1e293b; border-bottom: 1px solid #334155; }
+h1 { margin: 0; font-size: 1.5em; color: #f1f5f9; }
+.subtitle { color: #94a3b8; font-size: 0.9em; margin-top: 4px; }
+#stats { padding: 10px 20px; background: #1e293b; border-bottom: 1px solid #334155; font-size: 0.9em; color: #cbd5e1; }
+#stats span { margin-right: 20px; }
+#stats strong { color: #f59e0b; }
+#doctrine-buttons { padding: 10px 20px; background: #1e293b; border-bottom: 1px solid #334155; }
+#doctrine-buttons button { background: #334155; color: #e2e8f0; border: 1px solid #475569; padding: 6px 12px; margin-right: 8px; border-radius: 4px; cursor: pointer; font-size: 0.85em; }
+#doctrine-buttons button:hover { background: #475569; }
+#doctrine-buttons button.active { background: #f59e0b; color: #1e293b; border-color: #f59e0b; }
+#network { width: 100%; height: calc(100vh - 200px); background: #0f172a; }
+.tooltip { position: absolute; background: #1e293b; color: #f1f5f9; padding: 8px 12px; border-radius: 6px; font-size: 0.85em; border: 1px solid #475569; pointer-events: none; opacity: 0; transition: opacity 0.2s; max-width: 300px; z-index: 10; }
+.tooltip strong { color: #f59e0b; }
+</style>
+</head>
+<body>
+<header>
+<h1>Quilt Canon Knowledge Graph</h1>
+<div class="subtitle">Doctrines anchor cells. Cells anchor canon. Click a doctrine to filter.</div>
+</header>
+<div id="stats">
+<span>Nodes: <strong id="stat-nodes">?</strong></span>
+<span>Edges: <strong id="stat-edges">?</strong></span>
+<span>Doctrines: <strong id="stat-doctrines">5</strong></span>
+<span>Density: <strong id="stat-density">?</strong></span>
+<span>Pieces: <strong id="stat-pieces">?</strong></span>
+</div>
+<div id="doctrine-buttons"></div>
+<div id="network"></div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const DOCTRINE_COLORS = {
+  "cells_are_scars": "#e74c3c",
+  "witness_log_is_prediction": "#3498db",
+  "canon_gate_is_chord": "#2ecc71",
+  "oracle_is_heard": "#9b59b6",
+  "substrate_quantum": "#f39c12"
+};
+
+let allNodes, allEdges, network, currentFilter = null;
+
+async function loadGraph() {
+  const r = await fetch("canon-graph.json");
+  const g = await r.json();
+  allNodes = g.nodes.map(n => ({
+    id: n.id,
+    label: n.label || n.id,
+    color: n.color || "#888",
+    size: n.size || 10,
+    font: { color: "#e2e8f0", size: 11 },
+    doctrines: n.doctrines_hit,
+    title: n.body_preview || n.id,
+    tags: n.tags
+  }));
+  allEdges = g.edges.map(e => ({
+    source: e.source,
+    target: e.target,
+    color: { color: "#475569", highlight: "#f59e0b", opacity: 0.5 },
+    width: Math.min(5, e.weight * 1.5),
+    title: e.label,
+    smooth: { type: "continuous" }
+  }));
+
+  document.getElementById("stat-nodes").textContent = g.n_nodes;
+  document.getElementById("stat-edges").textContent = g.n_edges;
+  document.getElementById("stat-pieces").textContent = g.n_nodes;
+  const density = (2 * g.n_edges) / Math.max(1, g.n_nodes * (g.n_nodes - 1));
+  document.getElementById("stat-density").textContent = density.toFixed(4);
+
+  // Doctrine buttons
+  const btnContainer = document.getElementById("doctrine-buttons");
+  btnContainer.innerHTML = `<button class="active" data-doctrine="">All</button>` +
+    g.clusters.map(c =>
+      `<button data-doctrine="${c.doctrine}" style="border-color:${DOCTRINE_COLORS[c.doctrine]};">
+        ${c.doctrine} (${c.size})
+      </button>`
+    ).join("");
+  btnContainer.querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => {
+      btnContainer.querySelectorAll("button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      filterGraph(b.dataset.doctrine);
+    });
+  });
+
+  drawGraph(allNodes, allEdges);
+}
+
+function filterGraph(doctrine) {
+  currentFilter = doctrine;
+  if (!doctrine) {
+    drawGraph(allNodes, allEdges);
+    return;
+  }
+  const filteredNodes = allNodes.filter(n => n.doctrines && n.doctrines.includes(doctrine));
+  const ids = new Set(filteredNodes.map(n => n.id));
+  const filteredEdges = allEdges.filter(e => ids.has(e.source) && ids.has(e.target));
+  drawGraph(filteredNodes, filteredEdges);
+}
+
+function drawGraph(nodes, edges) {
+  const container = document.getElementById("network");
+  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+  const options = {
+    nodes: { shape: "dot", borderWidth: 1 },
+    edges: { smooth: { type: "continuous" } },
+    physics: {
+      forceAtlas2Based: { gravitationalConstant: -45, centralGravity: 0.005, springLength: 100, springConstant: 0.08 },
+      solver: "forceAtlas2Based",
+      stabilization: { iterations: 200 }
+    },
+    interaction: { hover: true, tooltipDelay: 100 }
+  };
+  network = new vis.Network(container, data, options);
+
+  // Tooltip
+  const tooltip = document.getElementById("tooltip");
+  network.on("hoverNode", e => {
+    const node = nodes.find(n => n.id === e.node);
+    if (node) {
+      tooltip.innerHTML = `<strong>${node.label || node.id}</strong><br>
+        Doctrines: ${(node.doctrines || []).join(", ") || "(none)"}<br>
+        ${node.title || ""}`;
+      tooltip.style.opacity = 1;
+    }
+  });
+  network.on("blurNode", () => { tooltip.style.opacity = 0; });
+  container.addEventListener("mousemove", e => {
+    tooltip.style.left = (e.pageX + 12) + "px";
+    tooltip.style.top = (e.pageY + 12) + "px";
+  });
+}
+
+loadGraph();
+</script>
+</body>
+</html>
