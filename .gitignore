@@ -14,3 +14,12 @@ venv/
 *.wav
 .DS_Store
 viewer/canon-graph.json
+
+# added by commit-and-push-all
+*.pyd
+.eggs/
+target/
+node_modules/
+.cache/
+.wrangler/
+*.log
